@@ -1,0 +1,45 @@
+{
+  "skill_name": "holochain-dev",
+  "evals": [
+    {
+      "id": 1,
+      "name": "dna-tripwire-on-main",
+      "prompt": "Hey, can you add a `priority: u8` field to the Mew entry in dnas/mewsfeed/zomes/integrity/mews/src/entries/mew.rs? Should be u8 with 0-9 range, default 0. We need to be able to sort mews by priority in the feed.",
+      "expected_output": "The agent should pause before editing, recognize that this is a DNA-hash-impacting change in an integrity zome, note that the project is on the protected `main` branch, explain the impact, and offer the user the choice between (a) explicit per-turn opt-in or (b) moving to a dev branch where the warning would not fire. The agent should NOT silently make the edit.",
+      "fixture": "fixtures/dna-tripwire-project",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "serialization-diagnostic-inversion",
+      "prompt": "My TypeScript client is throwing `Error: Cannot read property 'name' of undefined` when I call `get_profile` from my Holochain coordinator zome. Looks like the profile data isn't deserializing right. I'm on `@msgpack/msgpack ^3.0.0-beta.2` — should I downgrade to 2.x to see if that fixes it?",
+      "expected_output": "The agent should NOT recommend downgrading msgpack as a first step. It should invert the user's diagnostic order: first check whether the Rust side has been recompiled since the last type change (stale wasm), then check for Rust↔TS type drift (serde rename / camelCase / tag attributes), then check whether the agent is inspecting the wrong side of the boundary. The agent should explicitly say msgpack version is almost never the cause.",
+      "fixture": null,
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "must-get-agent-activity-cost",
+      "prompt": "I have this function that's slow:\n\n```rust\npub fn get_joining_timestamp(agent: AgentPubKey) -> ExternResult<Timestamp> {\n    let activity = must_get_agent_activity(\n        agent,\n        ChainFilter::new(/* ... */),\n    )?;\n    let first = activity.first().ok_or(wasm_error!(WasmErrorInner::Guest(\"empty chain\".into())))?;\n    Ok(first.action.action().timestamp())\n}\n```\n\nIt only needs to return the joining timestamp but it's making the whole feed slow because it gets called for every author of every visible mew. Can you optimize it?",
+      "expected_output": "The agent should identify that `must_get_agent_activity` is a whole-chain fetch and is the wrong tool for reading a single field. It should suggest one of the canonical fixes: (a) cache the joining timestamp once per agent the first time it's looked up, or (b) record the value as its own link/entry at create time so subsequent lookups are O(1). The agent should NOT just try to optimize within the chain-walk approach (e.g., tightening the ChainFilter).",
+      "fixture": null,
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "sweettest-bootstrap-from-scratch",
+      "prompt": "Write me a sweettest test for `create_mew` on this repo. The test should create two agents (alice and bob), have alice create a mew with content 'hello world', sync the DHT, and verify bob can read the mew via `get_all_mews`.",
+      "expected_output": "The agent should detect that the project has no existing sweettest harness (no `tests/` directory in the workspace, no sweettest dependency in `Cargo.toml`). It should announce explicitly that it's bootstrapping a harness alongside writing the test. It should: (1) create a new test crate with appropriate Cargo.toml, (2) add it to the workspace `members` list, (3) write the actual sweettest test for create_mew with two agents and an explicit consistency wait, and (4) tell the user to run the test via `nix develop -c cargo test` (not plain `cargo test`).",
+      "fixture": "fixtures/sweettest-bootstrap-project",
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "source-over-guessing-validation-context",
+      "prompt": "In my validate callback I'm planning to use `must_get_agent_activity` to walk back through the author's chain and check whether this Bead is a duplicate of one they posted earlier. I'm worried about whether the cascade scratch space sees in-flight commits when validation runs inline — does it? And does that matter for my use case?",
+      "expected_output": "The agent should refuse to answer this from training-data recall because cascade and scratch-space semantics have changed across HDK versions. It should determine the project's pinned HDI version (from Cargo.toml) and look it up against `https://docs.rs/hdi/<version>` (and/or `https://docs.rs/hdk/<version>`) before answering. It should cite the docs URL it consulted. It should NOT confidently produce an answer based on plausible-sounding semantics.",
+      "fixture": "fixtures/source-verify-project",
+      "files": []
+    }
+  ]
+}

@@ -399,3 +399,60 @@ All open questions resolved. The brief to feed to `Skill(skill: "skill-creator",
 > **TODO when Eric's `zits` fork lands:** point the skill at the fork's repo URL/version, document any divergence from upstream `zits` semantics surfaced in the vines research.
 >
 > **Skill body:** Target under 500 lines per official Claude Code guidance (NOT the ~150 from the prior planning notes — that was a made-up number). Order content so that hard tripwires and constraints come first; semantic depth later. Compaction preserves the first ~5K tokens of recently-invoked skills, so high-priority content benefits from being near the top. The body-vs-references split is `skill-creator`'s call; the file list above is illustrative.
+
+---
+
+## Iteration-2 corrections (2026-04-12)
+
+After running the iteration-1 evals, Eric flagged three substantive issues that produced factual errors in the with-skill responses. These corrections are encoded in the skill content as of iteration-2 and are recorded here so future iterations don't regress.
+
+### Correction 1 — AgentPubKey-as-EntryHash trick (NEW domain knowledge)
+
+**The fact:** `AgentPubKey` is the *only* Holochain entry type whose `EntryHash` equals the pubkey bytes themselves — no hash transformation. An agent's third genesis entry IS their `AgentPubKey`, written atomically with the other two genesis entries within microseconds of joining. So `get(EntryHash::try_from(agent_key)?)` returns that genesis record, and the record's timestamp is the joining time.
+
+**Why this matters:** this is the **correct** answer for "I need an agent's joining timestamp" — O(1), no cache, no chain walk, no `must_get_agent_activity`, no record-at-create-time link. It is strictly better than caching or recording-at-create-time, both of which were the iteration-1 skill's recommended fixes.
+
+**Encoded in:** `references/host-fn-cost-model.md` (full worked example), `SKILL.md` Tripwire C callout block (one of two "facts that are easy to miss"), memory `project_holochain_agentpubkey_entryhash_trick.md`.
+
+**Future-iteration warning:** if a future iteration "simplifies" the host-fn-cost-model section by removing this, the skill will regress on eval 3. The trick is non-obvious from training data and the worked example is load-bearing.
+
+### Correction 2 — Scratch space and the "perspective gap" myth
+
+**The error:** iteration-1's `references/validation-styles.md` and the agent's response on eval 5 framed inline-vs-non-inline validation as "inline sees scratch, non-inline doesn't, so be careful — they might disagree." This is **misleading** in a way that produced factually wrong content in the skill's reference text.
+
+**The correct framing:** scratch space accumulates pending commits within a single zome call. **All commits in the call are written atomically to the source chain** before any peer can see anything via gossip. By the time a peer is validating any action from that call, the entire batch is on the chain — peers always see the same state the author validated against. **There is no perspective gap.** What scratch is actually for: letting commit B see commit A from the same call via the cascade. The genuinely non-deterministic case is validating against state outside the chain (coordinator-memory, UI-memory) — *not* scratch-space visibility.
+
+**Why this matters:** the iteration-1 baseline response on eval 5 was actually rated "Pretty good and educational" precisely because it framed the model correctly ("staged in workspace → atomic write at end of call"). The iteration-1 with-skill response was **worse than baseline** because it dutifully cited the misleading framing from the skill's own reference. Worst-of-both-worlds: agent more confident, content less correct.
+
+**Encoded in:** `references/validation-styles.md` (rewritten "watch out for" section under Style 2), `references/host-fn-cost-model.md` (corrected the inline-vs-non-inline note under `must_get_agent_activity`), `SKILL.md` Tripwire C callout block (one of two "facts that are easy to miss"), memory `project_holochain_scratch_space_semantics.md`.
+
+**Future-iteration warning:** the "inline sees scratch, non-inline doesn't" framing is *technically* true but operationally misleading. If a future iteration "clarifies" by reintroducing it without the atomic-commit context, the skill will regress on eval 5.
+
+### Correction 3 — Integrity validation cannot prove non-existence
+
+**The error:** iteration-1's anti-pattern #7 in SKILL.md said "use a dedup link recorded at create time instead of walking the chain" without qualifying what dedup links actually buy. The agent's response on eval 5 then oversold dedup links as a complete solution to duplication.
+
+**The correct framing:** integrity validation is local and deterministic per action. It can enforce structural rules and chain-walk-based invariants on a single author's history, but it **cannot prove non-existence** of anything across agents. So:
+- Singleton entries cannot be enforced from `validate` (no global view)
+- Cross-agent uniqueness cannot be enforced from `validate` (two agents can race and both pass per-action validation)
+- EntryHash collision dedupes at the *entry* level (the entry exists once on the DHT) but the *Create actions* are still distinct — different timestamps, different `prev_action`s — so duplicate Create actions still propagate
+- Coordinator-side pre-checks help but are best-effort and racy by design
+
+**Implication:** dedup links are O(1) and useful for *per-author* dedup, but they do not prevent cross-agent duplication. The skill should be honest about this limit when recommending the pattern.
+
+**Encoded in:** `references/validation-styles.md` (new "What integrity validation cannot do" section), SKILL.md anti-pattern #7 (now qualified with the per-author scope and the cross-agent caveat), Tripwire C callout block (the scratch-space note also references this), memory not needed (it's a general-knowledge correction, not a load-bearing single fact).
+
+**Future-iteration warning:** if a future iteration removes the "what integrity cannot do" section to save space, the skill will regress on the eval 5 dedup framing.
+
+### Correction 4 — Serialization #4 wording sharpening
+
+**The change:** iteration-1's Tripwire E and `references/serialization-boundaries.md` said msgpack/serde version mismatches are "almost never" the cause. Eric clarified that in practice it's *essentially* never — the only documented real-world case is when an LLM generated the project's `package.json` and picked an obsolete `@msgpack/msgpack` version. Updated wording reflects this.
+
+**Encoded in:** `SKILL.md` Tripwire E step 4, `references/serialization-boundaries.md` step 4. No memory needed.
+
+### Things iteration-1 evals validated (no change needed)
+
+- **DNA-hash tripwire on protected branches** (eval 1) — with-skill 6/6, baseline 1/6. Behavior matches the skill's intent.
+- **Sweettest bootstrap with `nix develop -c`** (eval 4) — with-skill 7/7, baseline 5/7. Behavior matches.
+- **Source-over-guessing process** (eval 5 procedurally) — the agent correctly attempted docs.rs lookup, surfaced sandbox-blocked failure honestly, and cited the URL. The procedural discipline is right; only the *content* of the reference being cited needed correcting (corrections 2 and 3 above).
+- **Serialization diagnostic order inversion** (eval 2) — with-skill 6/6, baseline 5/6. Behavior matches; only the wording of step 4 needed sharpening (correction 4).
